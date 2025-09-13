@@ -1,0 +1,35 @@
+{
+  "name": "l2snake-contracts",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build": "hardhat compile",
+    "test": "hardhat test",
+    "lint": "echo 'No linter configured'",
+    "deploy": "hardhat run scripts/deploy.ts --network baseSepolia",
+    "status": "hardhat run scripts/status.ts --network baseSepolia",
+    "enter": "hardhat run scripts/enter.ts --network baseSepolia",
+    "reveal": "hardhat run scripts/reveal.ts --network baseSepolia",
+    "configure": "hardhat run scripts/configure.ts --network baseSepolia",
+    "seed": "hardhat run scripts/seed.ts --network baseSepolia",
+    "finalize": "hardhat run scripts/finalize.ts --network baseSepolia",
+    "claim": "hardhat run scripts/claim.ts --network baseSepolia"
+    ,
+    "check": "hardhat run scripts/checkDeployed.ts --network baseSepolia"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox": "^5.0.0",
+    "@types/chai": "^4.3.11",
+    "@types/mocha": "^10.0.6",
+    "@types/node": "^20.11.19",
+    "chai": "^4.4.1",
+    "dotenv": "^16.4.5",
+    "ethers": "^6.13.2",
+    "hardhat": "^2.22.9",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.5.4"
+  },
+  "dependencies": {
+    "@openzeppelin/contracts": "^5.0.2"
+  }
+}
