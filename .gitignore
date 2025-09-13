@@ -16,3 +16,6 @@ typechain-types
 dist
 .DS_Store
 client/.env.local
+.runs/
+.runs/
+*.zip
