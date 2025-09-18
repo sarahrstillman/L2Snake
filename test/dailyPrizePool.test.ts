@@ -60,4 +60,43 @@ describe("DailyPrizePool", () => {
     const balAfter = await ethers.provider.getBalance(player);
     expect(balAfter > balBefore).to.equal(true);
   });
+
+  it("limits continues to three per player per round", async () => {
+    const [owner, player] = await ethers.getSigners();
+
+    const DailyPrizePool = await ethers.getContractFactory("DailyPrizePool");
+    const pool = await DailyPrizePool.deploy(owner.address);
+    await pool.waitForDeployment();
+
+    const latest = await ethers.provider.getBlock("latest");
+    const now = Number(latest!.timestamp);
+    const dayId = dayIdFromTimestamp(now);
+    const entryFee = ethers.parseEther("1");
+    const continueFee = ethers.parseEther("0.1");
+    const enterClosesAt = BigInt(now + 100);
+    const revealClosesAt = BigInt(now + 200);
+
+    await (await pool.seedDay(dayId, entryFee, enterClosesAt, revealClosesAt)).wait();
+    await (await pool.setContinueFeeWei(continueFee)).wait();
+
+    const nonce = ethers.hexlify(ethers.randomBytes(32));
+    const abi = ethers.AbiCoder.defaultAbiCoder();
+    const commit = ethers.keccak256(
+      abi.encode(["bytes32", "address", "uint256"], [nonce, player.address, dayId])
+    );
+    await pool.connect(player).enterDaily(dayId, commit, { value: entryFee });
+
+    for (let i = 0; i < 3; i++) {
+      await expect(
+        pool.connect(player).payContinue(dayId, { value: continueFee })
+      ).to.emit(pool, "ContinuePaid");
+    }
+
+    await expect(
+      pool.connect(player).payContinue(dayId, { value: continueFee })
+    ).to.be.revertedWithCustomError(pool, "ContinueLimitReached");
+
+    const used = await pool.continues(dayId, player.address);
+    expect(used).to.equal(3);
+  });
 });

@@ -1,0 +1,24 @@
+name: finalize-rounds
+
+on:
+  schedule:
+    - cron: '*/1 * * * *'
+  workflow_dispatch: {}
+
+jobs:
+  finalize:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+      - name: Run finalize
+        env:
+          PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
+          BASE_SEPOLIA_RPC: ${{ secrets.BASE_SEPOLIA_RPC }}
+          POOL_ADDRESS: ${{ secrets.POOL_ADDRESS }}
+        run: npm run finalize

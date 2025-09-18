@@ -4,6 +4,8 @@ pragma solidity ^0.8.26;
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {MerkleProof} from "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
+import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
+import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
 
 /**
  * DailyPrizePool
@@ -13,6 +15,7 @@ import {MerkleProof} from "@openzeppelin/contracts/utils/cryptography/MerkleProo
  * - Winners claim their prizes using Merkle proofs. Owner takes rake on finalize.
  */
 contract DailyPrizePool is Ownable, ReentrancyGuard {
+    using ECDSA for bytes32;
     // -------- Errors --------
     error InvalidWindow();
     error AlreadySeeded();
@@ -24,6 +27,8 @@ contract DailyPrizePool is Ownable, ReentrancyGuard {
     error BadCommit();
     error NotFinalized();
     error AlreadyClaimed();
+    error ContinueLimitReached();
+    error BadAttestation();
 
     // -------- Events --------
     event DaySeeded(uint256 indexed dayId, uint256 entryFeeWei, uint64 enterClosesAt, uint64 revealClosesAt);
@@ -62,6 +67,22 @@ contract DailyPrizePool is Ownable, ReentrancyGuard {
     mapping(uint256 => mapping(address => bool)) public claimed;
     // dayId => player => continues used (counter)
     mapping(uint256 => mapping(address => uint16)) public continues;
+
+    // -------- Attestation (anti-cheat) --------
+    address public serverSigner; // trusted signer address
+    mapping(bytes32 => bool) public usedSession; // prevent replay (by sessionId)
+    bool public requireAttestation; // if true, legacy reveal() is disabled
+
+    uint16 public constant MAX_CONTINUES = 3;
+
+    struct RevealPayload {
+        address player;
+        uint256 dayId;
+        bytes32 sessionId;
+        uint64 score;
+        bytes32 runHash;
+        bytes32 timeDigest;
+    }
 
     // rake in basis points (1/100 of a percent). 1200 = 12%
     uint16 public rakeBps = 1200;
@@ -105,6 +126,14 @@ contract DailyPrizePool is Ownable, ReentrancyGuard {
 
     function setContinueFeeWei(uint256 fee) external onlyOwner {
         continueFeeWei = fee;
+    }
+
+    function setServerSigner(address signer) external onlyOwner {
+        serverSigner = signer;
+    }
+
+    function setRequireAttestation(bool enabled) external onlyOwner {
+        requireAttestation = enabled;
     }
 
     // Seed a day with fee and windows
@@ -168,6 +197,7 @@ contract DailyPrizePool is Ownable, ReentrancyGuard {
         bytes32 runHash,
         bytes32 nonce
     ) external {
+        if (requireAttestation) revert BadAttestation();
         DayParams storage d = rounds[dayId];
         if (d.enterClosesAt == 0) {
             // Not seeded nor touched yet -> no entry previously
@@ -191,6 +221,34 @@ contract DailyPrizePool is Ownable, ReentrancyGuard {
         e.runHash = runHash;
 
         emit Revealed(dayId, msg.sender, score, runHash);
+    }
+
+    // Attested reveal: server validates run off-chain and signs the payload.
+    function revealWithAttestation(RevealPayload calldata p, bytes calldata serverSig) external {
+        require(msg.sender == p.player, "not player");
+        if (serverSigner == address(0)) revert BadAttestation();
+        if (usedSession[p.sessionId]) revert AlreadyRevealed();
+
+        DayParams storage d = rounds[p.dayId];
+        if (d.enterClosesAt == 0) revert NotSeeded();
+        if (block.timestamp > d.revealClosesAt) revert TooLate();
+
+        Entry storage e = entries[p.dayId][p.player];
+        if (e.commit == bytes32(0)) revert NotSeeded(); // must have entered
+        if (e.revealed) revert AlreadyRevealed();
+
+        // Verify server signature over the canonical payload
+        bytes32 digest = keccak256(abi.encode(p.player, p.dayId, p.sessionId, p.score, p.runHash, p.timeDigest));
+        address recovered = ECDSA.recover(MessageHashUtils.toEthSignedMessageHash(digest), serverSig);
+        if (recovered != serverSigner) revert BadAttestation();
+
+        usedSession[p.sessionId] = true;
+
+        e.revealed = true;
+        e.score = p.score;
+        e.runHash = p.runHash;
+
+        emit Revealed(p.dayId, p.player, p.score, p.runHash);
     }
 
     // -------- Finalization & claims --------
@@ -230,7 +288,7 @@ contract DailyPrizePool is Ownable, ReentrancyGuard {
         emit Claimed(dayId, msg.sender, amount);
     }
 
-    // Allow a single paid continue per player per round; fee contributes to prize pot
+    // Allow paid continues per player per round, capped at MAX_CONTINUES; fee contributes to prize pot
     function payContinue(uint256 dayId) external payable nonReentrant {
         DayParams storage d = rounds[dayId];
         if (d.enterClosesAt == 0) revert NotSeeded();
@@ -239,7 +297,8 @@ contract DailyPrizePool is Ownable, ReentrancyGuard {
         require(msg.value == continueFeeWei, "wrong continue fee");
         Entry storage e = entries[dayId][msg.sender];
         if (e.commit == bytes32(0)) revert NotSeeded(); // must have entered
-        // Increment continue count; no hard per-round limit enforced
+        if (continues[dayId][msg.sender] >= MAX_CONTINUES) revert ContinueLimitReached();
+        // Increment continue count; capped per round
         continues[dayId][msg.sender] += 1;
         d.potWei += msg.value;
         emit ContinuePaid(dayId, msg.sender, msg.value);

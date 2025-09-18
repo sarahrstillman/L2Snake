@@ -1,0 +1,17 @@
+{
+  "name": "l2snake-server",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node -r dotenv/config server.js",
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.6.1",
+    "ethers": "^6.13.2",
+    "express": "^4.19.2",
+    "express-rate-limit": "^7.4.0",
+    "ioredis": "^5.4.1"
+  }
+}

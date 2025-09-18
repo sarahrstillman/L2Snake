@@ -15,7 +15,9 @@
     "finalize": "hardhat run scripts/finalize.ts --network baseSepolia",
     "claim": "hardhat run scripts/claim.ts --network baseSepolia"
     ,
-    "check": "hardhat run scripts/checkDeployed.ts --network baseSepolia"
+    "check": "hardhat run scripts/checkDeployed.ts --network baseSepolia",
+    "set:srv": "hardhat run scripts/setServerSigner.ts --network baseSepolia",
+    "attest:on": "hardhat run scripts/enableAttestation.ts --network baseSepolia"
   },
   "devDependencies": {
     "@nomicfoundation/hardhat-toolbox": "^5.0.0",
