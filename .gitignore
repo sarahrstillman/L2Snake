@@ -19,3 +19,4 @@ client/.env.local
 .runs/
 .runs/
 *.zip
+.env
