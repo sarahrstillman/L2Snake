@@ -8,16 +8,9 @@
     "lint": "echo 'No linter configured'",
     "deploy": "hardhat run scripts/deploy.ts --network baseSepolia",
     "status": "hardhat run scripts/status.ts --network baseSepolia",
-    "enter": "hardhat run scripts/enter.ts --network baseSepolia",
-    "reveal": "hardhat run scripts/reveal.ts --network baseSepolia",
-    "configure": "hardhat run scripts/configure.ts --network baseSepolia",
-    "seed": "hardhat run scripts/seed.ts --network baseSepolia",
-    "finalize": "hardhat run scripts/finalize.ts --network baseSepolia",
-    "claim": "hardhat run scripts/claim.ts --network baseSepolia"
-    ,
     "check": "hardhat run scripts/checkDeployed.ts --network baseSepolia",
     "set:srv": "hardhat run scripts/setServerSigner.ts --network baseSepolia",
-    "attest:on": "hardhat run scripts/enableAttestation.ts --network baseSepolia"
+    "set:entry": "hardhat run scripts/setEntryFee.ts --network baseSepolia"
   },
   "devDependencies": {
     "@nomicfoundation/hardhat-toolbox": "^5.0.0",

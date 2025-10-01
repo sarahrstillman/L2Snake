@@ -14,23 +14,25 @@ async function main() {
 
   if (!isContract) return;
 
-  const pool = await ethers.getContractAt("DailyPrizePool", addr);
-  const [owner, entryFee, contFee, epoch, grace] = await Promise.all([
-    (pool as any).owner?.() ?? Promise.resolve("(no owner function)"),
-    pool.defaultEntryFeeWei(),
-    (pool as any).continueFeeWei?.() ?? Promise.resolve(0n),
-    pool.epochLength(),
-    pool.revealGrace(),
+  const contract = await ethers.getContractAt("SnakeLeaderboard", addr);
+  const [owner, entryFee, serverSigner, feeSink, board] = await Promise.all([
+    (contract as any).owner?.() ?? Promise.resolve("(no owner function)"),
+    contract.entryFeeWei(),
+    contract.serverSigner(),
+    contract.feeSink(),
+    contract.getLeaderboard(),
   ]);
   console.log("Owner:", owner);
-  console.log("defaultEntryFee (ETH):", ethers.formatEther(entryFee));
-  console.log("continueFee (ETH):", typeof contFee === "bigint" ? ethers.formatEther(contFee) : "(n/a)");
-  console.log("epochLength (s):", epoch.toString());
-  console.log("revealGrace (s):", grace.toString());
+  console.log("Server signer:", serverSigner);
+  console.log("Fee sink:", feeSink);
+  console.log("Entry fee (ETH):", ethers.formatEther(entryFee));
+  console.log("Leaderboard entries:", board.length);
+  board.slice(0, 5).forEach((row: any, idx: number) => {
+    console.log(`  ${idx + 1}. ${row.player} — ${row.score.toString()} (session ${row.sessionId})`);
+  });
 }
 
 main().catch((e) => {
   console.error(e);
   process.exit(1);
 });
-

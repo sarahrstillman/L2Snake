@@ -110,16 +110,13 @@ function simulate(inputs, seedHex) {
   const rng = makeRng(seedHex)
   let score = 0
   let frame = 0
-  // sort inputs by frame ascending
   const ins = Array.isArray(inputs) ? inputs.slice().sort((a, b) => (a.f||0) - (b.f||0)) : []
   let idx = 0
   const collide = (h) => h.x < 0 || h.y < 0 || h.x >= GRID || h.y >= GRID || snake.some((s, i) => i > 0 && s.x === h.x && s.y === h.y)
   while (true) {
-    // apply any inputs at this frame
     while (idx < ins.length && (ins[idx].f|0) === frame) {
       const e = ins[idx]
       if (e && e.d && typeof e.d.x === 'number' && typeof e.d.y === 'number') {
-        // basic 180-turn guard like client
         if (!(e.d.x === -dir.x && e.d.y === -dir.y)) {
           dir = { x: e.d.x|0, y: e.d.y|0 }
         }
@@ -127,18 +124,15 @@ function simulate(inputs, seedHex) {
       idx++
     }
     frame++
-    // step
     const head = { x: snake[0].x + dir.x, y: snake[0].y + dir.y }
     if (collide(head)) break
     snake.unshift(head)
     if (head.x === food.x && head.y === food.y) {
       score += 1
-      // place new food using RNG
       food = { x: Math.floor(rng()*GRID), y: Math.floor(rng()*GRID) }
     } else {
       snake.pop()
     }
-    // hard cap to avoid infinite loops: 10k frames
     if (frame > 10000) break
   }
   const runHash = keccak256(toUtf8Bytes(JSON.stringify(inputs || [])))
@@ -152,10 +146,10 @@ const verifyLimiter = rateLimit({ windowMs: 60_000, limit: 60 })
 
 // 1) Start session
 app.post('/session', sessionLimiter, async (req, res) => {
-  const { roundId, address } = req.body || {}
+  const { address } = req.body || {}
   const sessionId = keccak256(toUtf8Bytes(crypto.randomUUID()))
   const seed = keccak256(toUtf8Bytes(crypto.randomUUID()))
-  await sessSet(sessionId, { seed, roundId, address: (address||'').toLowerCase(), beats: [] }, 3600)
+  await sessSet(sessionId, { seed, address: (address||'').toLowerCase(), beats: [] }, 3600)
   res.json({ sessionId, seed })
 })
 
@@ -174,15 +168,26 @@ app.post('/heartbeat', heartbeatLimiter, async (req, res) => {
 // 3) Verify run
 app.post('/verify-run', verifyLimiter, async (req, res) => {
   try {
-    const { sessionId, roundId, address, score, runHash, inputs, beats } = req.body || {}
-    const s = await sessGet(sessionId)
-    if (!s || s.roundId !== roundId) return res.status(400).json({ error: 'bad session/round' })
-    if (!address || s.address !== String(address).toLowerCase()) return res.status(400).json({ error: 'address mismatch' })
+  const { sessionId, address, score, runHash, inputs, beats } = req.body || {}
+  console.log('[verify-run request]', { sessionId, address, beats: Array.isArray(beats) ? beats.length : 0 });
+  const s = await sessGet(sessionId)
+  if (!s) {
+    console.warn('[verify-run reject]', { reason: 'bad session', sessionId })
+    return res.status(400).json({ error: 'bad session' })
+  }
+  if (!address || s.address !== String(address).toLowerCase()) {
+    console.warn('[verify-run reject]', { reason: 'address mismatch', expected: s.address, got: address, sessionId })
+    return res.status(400).json({ error: 'address mismatch' })
+  }
 
     // Re-sim
     const sim = simulate(inputs, s.seed)
-    if (Number(sim.score) !== Number(score) || sim.runHash !== runHash) {
+    if (sim.runHash !== runHash) {
+      console.warn('[verify-run reject]', { reason: 'hash mismatch', runHash, simHash: sim.runHash, sessionId })
       return res.status(403).json({ error: 'mismatch' })
+    }
+    if (score != null && Number(sim.score) !== Number(score)) {
+      console.warn('[verify-run warn]', { reason: 'score mismatch', score, simScore: sim.score, sessionId })
     }
 
     // Verify beats: monotonic and cadence bounds (env-tunable)
@@ -196,29 +201,37 @@ app.post('/verify-run', verifyLimiter, async (req, res) => {
     const arr = Array.isArray(beats) ? beats : []
 
     if (arr.length < MIN_BEATS) {
+      console.warn('[verify-run reject]', { reason: 'too few beats', min: MIN_BEATS, saw: arr.length, sessionId })
       return res.status(403).json({ error: 'too few beats', min: MIN_BEATS, saw: arr.length })
     }
 
     const intervals = []
 
     for (const b of arr) {
-      const bi = b.i | 0
-      const bt = b.t | 0
+      const bi = Number(b?.i ?? 0)
+      const bt = Number(b?.t ?? 0)
+      if (!Number.isFinite(bi) || !Number.isFinite(bt)) {
+        console.warn('[verify-run reject]', { reason: 'bad beat values', bi, bt, sessionId })
+        return res.status(403).json({ error: 'bad beats' })
+      }
 
       if (!ALLOW_UNSIG) {
         const msg = keccak256(toUtf8Bytes(`${sessionId}|${bi}|${bt}`))
         const who = verifyMessage(getBytes(msg), b.sig)
         if (who.toLowerCase() !== signer.address.toLowerCase()) {
+          console.warn('[verify-run reject]', { reason: 'bad beat sig', sessionId, beat: b })
           return res.status(403).json({ error: 'bad beat sig' })
         }
       }
 
       if (bi <= lastI || bt <= lastT) {
+        console.warn('[verify-run reject]', { reason: 'non-monotonic beats', lastI, lastT, bi, bt, sessionId })
         return res.status(403).json({ error: 'non-monotonic beats', lastI, lastT, bi, bt })
       }
 
       const dt = lastT === 0 ? 0 : bt - lastT
       if (lastT !== 0 && (dt < MIN_MS || dt > MAX_MS)) {
+        console.warn('[verify-run reject]', { reason: 'bad cadence', dt, minMs: MIN_MS, maxMs: MAX_MS, sessionId })
         return res.status(403).json({ error: 'bad cadence', dt, minMs: MIN_MS, maxMs: MAX_MS })
       }
 
@@ -232,7 +245,7 @@ app.post('/verify-run', verifyLimiter, async (req, res) => {
     // Attest using canonical simulated score
     const canonicalScore = Number(sim.score)
     const abi = AbiCoder.defaultAbiCoder()
-    const enc = abi.encode(['address','uint256','bytes32','uint64','bytes32','bytes32'], [address, BigInt(roundId), sessionId, BigInt(canonicalScore), runHash, timeDigest])
+    const enc = abi.encode(['address','bytes32','uint64','bytes32','bytes32'], [address, sessionId, BigInt(canonicalScore), runHash, timeDigest])
     const digest = keccak256(getBytes(enc))
     const attestSig = await signer.signMessage(getBytes(digest))
     res.json({ timeDigest, attestSig, score: canonicalScore })

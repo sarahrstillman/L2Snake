@@ -1,105 +1,91 @@
-# Token Snake — On-chain Daily Prize Pool (L2-ready)
+# Token Snake — Endless Leaderboard (L2-ready)
 
-This repo contains the smart contracts for a rolling 5-minute leaderboard with entry fees (no boosts). It targets an L2 like Base and supports a commit–reveal flow and Merkle-based payouts so winners can claim cheaply.
+This repo now implements an endless, pay-to-play Snake experience on L2:
 
-No ads included. We can add them to the client later.
+- Every run costs an entry fee (default 0.0005 ETH).
+- There are no continues—each paid run stands on its own.
+- Scores are attested by an off-chain verifier and submitted on-chain.
+- The contract records every verified run and keeps the global top 25 single-run scores on-chain for bragging rights.
 
 ## What’s Included
 
-- `contracts/DailyPrizePool.sol`: Core contract for entries, reveals, finalization, and claims.
-- (No boosts in this MVP.)
-- `scripts/deploy.ts`: Example deployment + day seeding script.
-- `test/dailyPrizePool.test.ts`: Minimal end-to-end test (enter → reveal → finalize → claim).
+- `contracts/SnakeLeaderboard.sol` – Core contract for pay-to-play runs, attested score submission, and an on-chain top-25 leaderboard.
+- `server/server.js` – Minimal attestation server (session + heartbeat + run verification) updated to the new run-based flow.
+- `client/` – Vite + React front-end with the Snake game, run management, and leaderboard UI.
+- Hardhat scripts: `deploy.ts`, `setServerSigner.ts`, `setFees.ts`, `status.ts`, `checkDeployed.ts` for day-to-day operations.
+- Tests: `test/snakeLeaderboard.test.ts` covers run lifecycle and leaderboard eviction.
 
-## Prereqs
+## Prerequisites
 
 - Node 18+
-- You’ll need to install packages (network required):
-  - `npm install`
+- `npm install` in the repo root (Hardhat) and in `client/` / `server/` when running locally.
 
-## Configure
+## Environment
 
-Copy `.env.example` to `.env` and fill:
+See `DEPLOY_CHECKLIST.md` for all required env variables. In short:
 
-- `PRIVATE_KEY`: Deployer key (use a test key for testnets).
-- `BASE_SEPOLIA_RPC`: RPC URL for Base Sepolia (default works).
-- `FEE_SINK`: Address to receive rake (defaults to deployer if unset).
+- Root `.env`: deployer key, RPC, optional fee sink, server signer address, desired entry fee.
+- `client/.env.production`: `VITE_POOL_ADDRESS`, `VITE_PUBLIC_RPC`, `VITE_SERVER_URL`.
+- `server/.env`: signer private key, contract address, RPC, client origin, heartbeat bounds, optional Redis, etc.
 
-## Build & Test (Local Hardhat)
+## Build & Test
 
-- Compile: `npm run build`
-- Test: `npm run test`
+- Compile contracts: `npm run build`
+- Run Hardhat tests: `npm run test`
+- Build the client: `cd client && npm run build`
+- Start the attestation server locally: `cd server && npm run dev`
 
-## Deploy (Base Sepolia)
+## Deploying the Contract
 
-1) Fund your deployer on Base Sepolia (faucet).  
-2) Deploy:
+1. Fund your deployer on Base Sepolia (or target network).
+2. Ensure `.env` has `POOL_ADDRESS` unset (for fresh deploy) plus optional overrides:
+   - `FEE_SINK`, `SERVER_SIGNER`, `ENTRY_FEE_ETH`
+3. Deploy:
+   ```
+   npm run deploy
+   ```
+   The script deploys `SnakeLeaderboard` and reports the address.
+4. Record the new address in `.env`, `client/.env*`, `server/.env`.
+5. Register the attestation signer:
+   ```
+   npm run set:srv
+   ```
+6. Adjust the entry fee any time with:
+   ```
+   ENTRY_FEE_ETH=0.0005 npm run set:entry
+   ```
+7. Check status or leaderboard snapshot:
+   ```
+   npm run status
+   npm run check
+   ```
 
-```
-npm run deploy
-```
+## Gameplay Flow
 
-The script:
-- Deploys `DailyPrizePool`.
-- Configures 5-minute rounds and default entry fee.
-- Optionally seeds a short test window.
+1. Client requests a session from the server (`/session`) to obtain a deterministic seed + sessionId.
+2. User clicks **Start**, pays the entry fee on-chain (`startRun(sessionId)`).
+3. Snake gameplay streams inputs/heartbeats while the run is active.
+4. When the run ends, the client posts the run data to `/verify-run`; the server re-simulates and signs the canonical score payload.
+5. The client submits the signed payload via `submitScore`, recording that run on-chain and bubbling it into the top-25 leaderboard if it’s high enough.
+6. Leaderboard fetches the latest standings directly from the contract.
 
-## Contract Flow
+## Attestation Server
 
-- Rounds can be auto-seeded every 5 minutes (configurable) or manually seeded.
-- Round id `dayId` can be computed as `Math.floor(now / epochLength)`; with defaults `epochLength=300` seconds (5 minutes).
-- Default reveal grace is 60 seconds after round end.
-- Owner can still seed/override a specific round: `seedDay(dayId, entryFeeWei, enterClosesAt, revealClosesAt)`.
-- Player enters with fee: `enterDaily(dayId, commit)`.
-- Player reveals after playing: `reveal(dayId, score, runHash, nonce)`.
-- Owner finalizes with winners: `finalizeDay(dayId, merkleRoot)`.
-- Winners claim: `claim(dayId, amount, proof)`.
+- Endpoints: `/session`, `/heartbeat`, `/verify-run`.
+- Uses deterministic replay + heartbeat cadence checks (tunable via env) to approve scores.
+- Returns `timeDigest` and `attestSig` matching the contract’s `ScorePayload`.
+- Keep `HB_ALLOW_UNSIG=0` in production to enforce signed heartbeats.
 
-### Commit Schemes Supported (MVP)
+## Front-end Notes
 
-To keep client integration simple, `reveal()` accepts commits made either way:
+- The UI shows entry pricing, run status, and the top 25 global scores.
+- The connected wallet’s cumulative total + leaderboard rank are highlighted separately.
+- Session seeds are stored per run to keep local replays deterministic; they are cleared after submission.
 
-- Full commit (stronger): `keccak256(score, runHash, nonce, player, dayId)`.
-- Shell commit (simpler): `keccak256(nonce, player, dayId)`.
+## Next Steps / TODOs
 
-The off-chain scorer should still validate `runHash` and `score` deterministically from the input stream. Full commit is recommended for production.
+- Decide tie-breaking / eviction rules for the leaderboard (currently higher totals displace lower ones; ties keep earlier entries in-place).
+- Add pagination or historical leaderboards if desired.
+- Integrate analytics or rewards for top scorers in future iterations.
 
-### Rake & Pool
-
-- `rakeBps` defaults to 1200 (12%).
-- On `finalizeDay`, the contract computes rake and transfers it to `feeSink`.
-- Winners claim from the remaining pool using Merkle proofs.
-
-## Client Integration (Quick Notes)
-
-- Compute `dayId = Math.floor(Date.now()/1000/epochLength)` (default 300s).
-- Choose a 32-byte `nonce` per entry.
-- Option A (recommended): Full commit with score/runHash; enter after playing.  
-  `commit = keccak256(abi.encode(score, runHash, nonce, address, dayId))`
-- Option B (simpler): Shell commit before playing.  
-  `commit = keccak256(abi.encode(nonce, address, dayId))`
-- After the day closes, fetch your `{amount, proof}` from your backend and call `claim`.
-
-## Boosts
-
-- Not included in this MVP. All players compete equally per round.
-
-## Security Notes (MVP)
-
-- Commit–reveal prevents last-minute score sniping.
-- Off-chain verifier must validate physics via deterministic replay; invalid reveals should be excluded from the Merkle winners list.
-- Claims are pull-based and protected with reentrancy guards.
-
-## L2 Rollout
-
-- Start on Base Sepolia, dry-run short days (e.g., 30 minutes) to test the full cycle.
-- Switch RPC to Base mainnet, set real `entryFeeWei`, and go live.
-## 5-Minute Prize Rounds
-
-- Configure rolling schedule via admin:
-  - `setSchedule(epochLength=300, revealGrace=60)`
-  - `setDefaultEntryFeeWei(fee)` (enables auto rounds if > 0)
-- If a round is not explicitly seeded, the contract derives windows:
-  - `enterClosesAt = (roundId + 1) * epochLength`
-  - `revealClosesAt = enterClosesAt + revealGrace`
-- The first entry to a given `roundId` persists these values.
+For deployment steps and smoke tests, follow `DEPLOY_CHECKLIST.md`.

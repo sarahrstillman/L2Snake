@@ -25,8 +25,8 @@ Duplicate this file as `.env` in each environment and fill with real values.
 1. Confirm the deployed pool address matches `VITE_POOL_ADDRESS`.
 2. Run helper scripts once per new deployment:
    - `npm run set:srv` to register the attestation signer address.
-   - `npm run attest:on` to require attested reveals.
-3. (Optional) Update continue fee, round parameters, etc., via existing scripts.
+   - `ENTRY_FEE_ETH=0.0005 npm run set:entry` if you need to update the entry pricing.
+3. (Optional) `npm run status` to print the on-chain entry fee and current leaderboard snapshot.
 
 ## 3. Client Build & Hosting
 1. From `client/`: `npm install` (first time), then `npm run build`.
@@ -40,7 +40,9 @@ Duplicate this file as `.env` in each environment and fill with real values.
 
 ## 5. End-to-End Test
 1. Point the client to the deployed server via `VITE_SERVER_URL`.
-2. Connect a wallet, press **Enter**, wait for the transaction, press **Start**, intentionally crash the snake, and confirm **Reveal** succeeds on-chain.
+2. Connect a wallet, press **Start**, approve the entry fee, and begin a run.
+3. Crash intentionally, submit the run, and confirm the attested score submission succeeds on-chain.
+4. Refresh the UI and ensure the leaderboard updates with the new score.
 
 ## 6. Git & CI
 1. `git status` to review changes.
